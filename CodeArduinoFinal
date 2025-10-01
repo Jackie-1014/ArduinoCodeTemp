@@ -1,0 +1,138 @@
+// Pinball-style targets with per-sensor thresholds and 4 sensors/LED pairs.
+// Retains: startNewRound(), celebrate() with green flashes then both, and simple blocking timing.
+
+// === Config ===
+// Number of targets (each: 1 analog sensor + 2 LEDs)
+const int numTargets = 4;  // expanded from 3 to 4
+
+// Sensors (analog pins)
+const int sensorPins[numTargets] = {A0, A1, A2, A3};
+
+// LEDs (digital pins: red, green interleaved)
+const int redLedPins[numTargets]   = {2, 4, 6, 8};
+const int greenLedPins[numTargets] = {3, 5, 7, 9};
+
+// Per-sensor thresholds (0–1023 at 10-bit); replace these placeholders with measured values
+int thresholds[numTargets] = {
+  300,  // A0
+  300,  // A1
+  300,  // A2
+  300   // A3
+};
+
+// Optional: auto-calibrate thresholds at startup (baseline + margin)
+const bool AUTO_CALIBRATE = false;  // set true to auto-set thresholds at boot
+const int  calibSamples   = 100;    // samples per sensor
+const int  calibDelayMs   = 5;      // ms between samples
+const int  calibMargin    = 60;     // baseline + this margin -> threshold
+
+// Celebration timing
+const unsigned long flashInterval = 600;
+const int greenFlashes = 2;  // green blinks 2 times
+const int bothFlashes  = 2;  // both blink 2 times
+
+// State
+bool targetHit[numTargets] = {false, false, false, false};
+
+void setup() {
+  // Standardize UNO R4 ADC reads to 10-bit so thresholds remain 0–1023.
+  // Guarded so it still compiles on boards that don't support analogReadResolution.
+  #if defined(ARDUINO_UNOR4_WIFI) || defined(ARDUINO_UNOR4_MINIMA)
+    analogReadResolution(10);
+  #endif
+
+  for (int i = 0; i < numTargets; i++) {
+    pinMode(redLedPins[i], OUTPUT);
+    pinMode(greenLedPins[i], OUTPUT);
+  }
+
+  Serial.begin(9600);
+
+  if (AUTO_CALIBRATE) {
+    calibrateThresholds();
+  }
+
+  startNewRound();
+  Serial.println("=== Game Ready ===");
+  Serial.println("Per-sensor thresholds are in thresholds[] (0–1023 at 10-bit).");
+}
+
+void loop() {
+  // Check each target for threshold crossing
+  for (int i = 0; i < numTargets; i++) {
+    int val = analogRead(sensorPins[i]);
+    if (!targetHit[i] && val > thresholds[i]) {
+      targetHit[i] = true;
+      digitalWrite(redLedPins[i], LOW);
+      digitalWrite(greenLedPins[i], HIGH);
+    }
+  }
+
+  // If all hit → celebrate → reset
+  if (allTargetsHit()) {
+    celebrate();
+    startNewRound();
+  }
+}
+
+// === Helpers ===
+bool allTargetsHit() {
+  for (int i = 0; i < numTargets; i++) {
+    if (!targetHit[i]) return false;
+  }
+  return true;
+}
+
+void setAllRed(int state) {
+  for (int i = 0; i < numTargets; i++) digitalWrite(redLedPins[i], state);
+}
+
+void setAllGreen(int state) {
+  for (int i = 0; i < numTargets; i++) digitalWrite(greenLedPins[i], state);
+}
+
+void celebrate() {
+  // Flash greens 2 times
+  for (int i = 0; i < greenFlashes; i++) {
+    setAllGreen(HIGH);
+    delay(flashInterval);
+    setAllGreen(LOW);
+    delay(flashInterval);
+  }
+  // Flash red + green together 2 times
+  for (int i = 0; i < bothFlashes; i++) {
+    setAllRed(HIGH);
+    setAllGreen(HIGH);
+    delay(flashInterval);
+    setAllRed(LOW);
+    setAllGreen(LOW);
+    delay(flashInterval);
+  }
+}
+
+void startNewRound() {
+  for (int i = 0; i < numTargets; i++) {
+    targetHit[i] = false;
+    digitalWrite(redLedPins[i], HIGH);
+    digitalWrite(greenLedPins[i], LOW);
+  }
+  Serial.println("=== New round ===");
+}
+
+// Auto-calibrate thresholds: baseline + margin per sensor
+void calibrateThresholds() {
+  Serial.println("Calibrating thresholds...");
+  for (int i = 0; i < numTargets; i++) {
+    long sum = 0;
+    for (int s = 0; s < calibSamples; s++) {
+      sum += analogRead(sensorPins[i]);
+      delay(calibDelayMs);
+    }
+    int baseline = (int)(sum / calibSamples);
+    thresholds[i] = baseline + calibMargin;
+    Serial.print("Sensor "); Serial.print(i);
+    Serial.print(" baseline="); Serial.print(baseline);
+    Serial.print(" -> threshold="); Serial.println(thresholds[i]);
+  }
+  Serial.println("Calibration done.");
+}
